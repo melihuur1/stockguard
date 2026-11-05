@@ -1,0 +1,70 @@
+spring:
+  application:
+    name: stockguard
+  datasource:
+    url: ${STOCKGUARD_DB_URL:jdbc:postgresql://localhost:5442/stockguard}
+    username: ${STOCKGUARD_DB_USERNAME:stockguard}
+    password: ${STOCKGUARD_DB_PASSWORD:}
+    hikari:
+      maximum-pool-size: ${STOCKGUARD_DB_POOL_SIZE:20}
+      minimum-idle: 2
+      connection-timeout: 10000
+      # lock_timeout must stay above PostgreSQL's deadlock_timeout (1s) so that deadlocks are
+      # reported as deadlocks. The idle-in-transaction limit stops a hung client from pinning a row lock.
+      connection-init-sql: "SET lock_timeout = '3s'; SET idle_in_transaction_session_timeout = '30s'"
+  jpa:
+    open-in-view: false
+    hibernate:
+      ddl-auto: validate
+    properties:
+      hibernate:
+        jdbc:
+          time_zone: UTC
+  mvc:
+    problemdetails:
+      enabled: true
+  web:
+    # One language for the whole API, whatever the client's Accept-Language says.
+    locale: en
+    locale-resolver: fixed
+
+server:
+  port: ${STOCKGUARD_PORT:8095}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      show-details: never
+      probes:
+        enabled: true
+
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html
+    persist-authorization: false
+    operations-sorter: alpha
+    tags-sorter: alpha
+
+stockguard:
+  instance-id: ${STOCKGUARD_INSTANCE_ID:local}
+  security:
+    # No default on purpose: the application refuses to start without a real secret.
+    jwt-secret: ${STOCKGUARD_JWT_SECRET}
+    token-ttl: 60m
+    admin:
+      username: ${STOCKGUARD_ADMIN_USERNAME:}
+      password: ${STOCKGUARD_ADMIN_PASSWORD:}
+  reservation:
+    default-ttl: 15m
+    expiry:
+      enabled: true
+      sweep-interval: ${STOCKGUARD_EXPIRY_SWEEP_INTERVAL:5s}
+      batch-size: 100
+  simulation:
+    enabled: ${STOCKGUARD_SIMULATION_ENABLED:false}
+    # Comma separated base URLs. Empty means "this instance only".
+    targets: ${STOCKGUARD_SIMULATION_TARGETS:}

@@ -1,0 +1,27 @@
+# Build output
+target/
+*.class
+*.log
+
+# Secrets and local configuration: never commit these
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.jks
+
+# IDE and OS
+.idea/
+*.iml
+.vscode/
+.classpath
+.project
+.settings/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Claude Code local state
+.claude/

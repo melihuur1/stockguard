@@ -25,3 +25,8 @@ desktop.ini
 
 # Claude Code local state
 .claude/
+
+# Only the documents listed here are published from docs/. Anything else in that folder stays local.
+/docs/*
+!/docs/architecture.md
+!/docs/concurrency.md

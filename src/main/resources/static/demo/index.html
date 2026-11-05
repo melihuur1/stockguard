@@ -1,0 +1,286 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>StockGuard demo</title>
+<link rel="icon" href="data:,">
+<style>
+  :root {
+    --bg: #f6f7f9; --surface: #ffffff; --border: #dfe3e8; --text: #1a2129; --muted: #5d6875;
+    --accent: #1f5fbf; --accent-text: #ffffff; --good: #14733d; --good-bg: #e4f4ea; --bad: #b3261e; --bad-bg: #fbe9e7;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #12161b; --surface: #1b2128; --border: #2e3640; --text: #e8ebef; --muted: #9aa5b1;
+      --accent: #6ea4f0; --accent-text: #0d1319; --good: #7fd6a0; --good-bg: #17301f; --bad: #f2a29b; --bad-bg: #3a1c19;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 860px; margin: 0 auto; padding: 32px 16px 64px; }
+  h1 { font-size: 24px; margin: 0; }
+  h2 { font-size: 15px; margin: 0 0 12px; }
+  p.lead { color: var(--muted); margin: 6px 0 24px; }
+  section { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 20px; margin-bottom: 16px; }
+  label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 4px; }
+  input { width: 100%; padding: 8px 10px; font: inherit; color: inherit; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; }
+  button { font: inherit; padding: 8px 16px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); color: inherit; cursor: pointer; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); font-weight: 600; }
+  button:disabled { opacity: .6; cursor: progress; }
+  .fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 14px; }
+  .actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .message { margin-top: 12px; font-size: 14px; color: var(--bad); }
+  .signed-in { color: var(--good); font-size: 14px; }
+  .verdict { padding: 14px 16px; border-radius: 8px; font-weight: 600; margin-bottom: 16px; }
+  .verdict.good { background: var(--good-bg); color: var(--good); }
+  .verdict.bad { background: var(--bad-bg); color: var(--bad); }
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+  .stat { border: 1px solid var(--border); border-radius: 6px; padding: 10px 12px; }
+  .stat b { display: block; font-size: 22px; font-variant-numeric: tabular-nums; }
+  .stat span { font-size: 13px; color: var(--muted); }
+  .stat.alert b { color: var(--bad); }
+  .group { margin-top: 18px; }
+  .bar-row { display: grid; grid-template-columns: minmax(70px, 110px) 1fr 44px; gap: 10px; align-items: center; font-size: 14px; margin-bottom: 6px; }
+  .bar { height: 8px; background: var(--border); border-radius: 4px; overflow: hidden; }
+  .bar i { display: block; height: 100%; background: var(--accent); }
+  ul.checks { list-style: none; margin: 0; padding: 0; font-size: 14px; }
+  ul.checks li { padding: 2px 0; overflow-wrap: anywhere; }
+  .ok { color: var(--good); }
+  .fail { color: var(--bad); }
+  .table-wrap { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; font-variant-numeric: tabular-nums; }
+  th, td { text-align: right; padding: 6px 8px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  th { color: var(--muted); font-weight: 500; }
+  th:last-child, td:last-child { text-align: left; }
+  footer { font-size: 14px; color: var(--muted); }
+  a { color: var(--accent); }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<main>
+  <h1>StockGuard</h1>
+  <p class="lead">Races real concurrent reservations against this server. Nothing on this page is a fixed value: every number is counted from HTTP responses or read back from PostgreSQL.</p>
+
+  <section id="login-section">
+    <h2>Sign in as administrator</h2>
+    <form id="login-form">
+      <div class="fields">
+        <div><label for="username">Username</label><input id="username" autocomplete="username" value="admin" required></div>
+        <div><label for="password">Password</label><input id="password" type="password" autocomplete="current-password" required></div>
+      </div>
+      <div class="actions"><button class="primary" type="submit">Sign in</button></div>
+      <div class="message" id="login-message" role="alert" hidden></div>
+    </form>
+  </section>
+
+  <section id="run-section" hidden>
+    <h2>Simulation <span class="signed-in">(signed in)</span></h2>
+    <form id="run-form">
+      <div class="fields">
+        <div><label for="stock">Initial stock</label><input id="stock" type="number" min="0" max="100000" value="1" required></div>
+        <div><label for="requests">Concurrent requests</label><input id="requests" type="number" min="1" max="1000" value="100" required></div>
+        <div><label for="units">Units per request</label><input id="units" type="number" min="1" max="100" value="1" required></div>
+      </div>
+      <div class="actions">
+        <button class="primary" id="run" type="submit">Run race</button>
+        <button type="button" data-preset="1,100,1">1 unit, 100 requests</button>
+        <button type="button" data-preset="10,100,1">10 units, 100 requests</button>
+        <button type="button" data-preset="100,1000,1">100 units, 1000 requests</button>
+      </div>
+      <div class="message" id="run-message" role="alert" hidden></div>
+    </form>
+  </section>
+
+  <section id="result-section" hidden aria-live="polite">
+    <div class="verdict" id="verdict"></div>
+    <div class="stats" id="outcome"></div>
+    <div class="group"><h2>Stock after the race</h2><div class="stats" id="stock-after"></div></div>
+    <div class="group"><h2>Requests answered per instance</h2><div id="instances"></div></div>
+    <div class="group"><h2>Timing</h2><div class="stats" id="timing"></div></div>
+    <div class="group"><h2>Invariants recomputed from the database</h2><ul class="checks" id="checks"></ul></div>
+  </section>
+
+  <section id="history-section" hidden>
+    <h2>Runs in this session</h2>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Stock</th><th>Requests</th><th>Succeeded</th><th>Rejected</th><th>Unexpected</th><th>Oversold</th><th>ms</th><th>Result</th></tr></thead>
+        <tbody id="history"></tbody>
+      </table>
+    </div>
+  </section>
+
+  <footer>Every API operation can be tried in <a href="/swagger-ui.html">Swagger UI</a>.</footer>
+</main>
+
+<script>
+  // The token lives in this variable only, so it is gone as soon as the page is closed.
+  let token = null;
+  const element = id => document.getElementById(id);
+
+  // The API names each rule after the violation it looks for. Here each one is stated as the property that holds.
+  const invariants = {
+    NEGATIVE_STOCK: 'No stock counter is negative',
+    TOTAL_IS_NOT_AVAILABLE_PLUS_RESERVED: 'Total equals available plus reserved',
+    RESERVED_DOES_NOT_MATCH_PENDING_RESERVATIONS: 'Reserved equals the units held by pending reservations',
+    OVERSOLD: 'Units held or sold never exceed units received',
+    COUNTERS_DO_NOT_MATCH_LEDGER: 'Counters equal the sum of the stock ledger',
+    LEDGER_CHAIN_BROKEN: 'Every ledger line continues from the previous one',
+    RESERVATION_NOT_SETTLED_EXACTLY_ONCE: 'Every reservation was settled at most once'
+  };
+
+  function show(id, text) {
+    element(id).textContent = text;
+    element(id).hidden = false;
+  }
+
+  function stat(label, value, alert) {
+    const box = document.createElement('div');
+    box.className = alert ? 'stat alert' : 'stat';
+    const number = document.createElement('b');
+    number.textContent = value;
+    const caption = document.createElement('span');
+    caption.textContent = label;
+    box.append(number, caption);
+    return box;
+  }
+
+  async function post(path, body) {
+    const headers = { 'Content-Type': 'application/json' };
+    if (token) headers.Authorization = 'Bearer ' + token;
+    const response = await fetch(path, { method: 'POST', headers, body: JSON.stringify(body) });
+    const data = await response.json().catch(() => ({}));
+    return { status: response.status, data };
+  }
+
+  element('login-form').addEventListener('submit', async event => {
+    event.preventDefault();
+    element('login-message').hidden = true;
+    try {
+      const { status, data } = await post('/api/v1/auth/login', {
+        username: element('username').value, password: element('password').value
+      });
+      if (status !== 200) {
+        show('login-message', status === 401 ? 'Wrong username or password.' : (data.detail || 'Login failed.'));
+        return;
+      }
+      token = data.accessToken;
+      element('password').value = '';
+      element('login-section').hidden = true;
+      element('run-section').hidden = false;
+    } catch (error) {
+      show('login-message', 'The server could not be reached.');
+    }
+  });
+
+  document.querySelectorAll('[data-preset]').forEach(button => button.addEventListener('click', () => {
+    const [stock, requests, units] = button.dataset.preset.split(',');
+    element('stock').value = stock;
+    element('requests').value = requests;
+    element('units').value = units;
+  }));
+
+  element('run-form').addEventListener('submit', async event => {
+    event.preventDefault();
+    element('run-message').hidden = true;
+    const run = element('run');
+    run.disabled = true;
+    run.textContent = 'Racing...';
+    try {
+      const { status, data } = await post('/api/v1/simulations/reservations', {
+        initialStock: Number(element('stock').value),
+        concurrentRequests: Number(element('requests').value),
+        quantityPerRequest: Number(element('units').value)
+      });
+      if (status === 200) {
+        render(data);
+      } else if (status === 401) {
+        show('run-message', 'Your session has expired. Reload the page and sign in again.');
+      } else if (status === 403) {
+        show('run-message', 'This account is not an administrator.');
+      } else if (status === 404) {
+        show('run-message', 'Simulation is disabled on this server. Set STOCKGUARD_SIMULATION_ENABLED=true.');
+      } else if (data.errors && data.errors.length) {
+        show('run-message', data.errors.map(e => e.field + ' ' + e.message).join('; '));
+      } else {
+        show('run-message', data.detail || ('The simulation failed with status ' + status + '.'));
+      }
+    } catch (error) {
+      show('run-message', 'The server could not be reached.');
+    } finally {
+      run.disabled = false;
+      run.textContent = 'Run race';
+    }
+  });
+
+  function render(report) {
+    const verdict = element('verdict');
+    verdict.className = 'verdict ' + (report.dataConsistent ? 'good' : 'bad');
+    verdict.textContent = report.dataConsistent ? 'Data consistency: preserved' : 'Data consistency: VIOLATED';
+
+    element('outcome').replaceChildren(
+      stat('Initial stock', report.initialStock),
+      stat('Concurrent requests', report.concurrentRequests),
+      stat('Successful reservations', report.successfulReservations),
+      stat('Rejected reservations', report.rejectedReservations),
+      stat('Unexpected failures', report.unexpectedFailures, report.unexpectedFailures > 0),
+      stat('Rows in database', report.reservationRowsInDatabase),
+      stat('Oversold units', report.oversoldUnits, report.oversoldUnits > 0),
+      stat('Negative stock counters', report.negativeStockCounters, report.negativeStockCounters > 0)
+    );
+    element('stock-after').replaceChildren(
+      stat('Total', report.totalQuantity),
+      stat('Available', report.availableQuantity),
+      stat('Reserved', report.reservedQuantity)
+    );
+    element('timing').replaceChildren(
+      stat('Whole race (ms)', report.durationMillis),
+      stat('Latency p50 (ms)', report.latencyMillis.p50),
+      stat('Latency p95 (ms)', report.latencyMillis.p95),
+      stat('Latency max (ms)', report.latencyMillis.max)
+    );
+
+    const rows = Object.entries(report.requestsPerInstance).map(([instance, count]) => {
+      const row = document.createElement('div');
+      row.className = 'bar-row';
+      const name = document.createElement('span');
+      name.textContent = instance;
+      const bar = document.createElement('div');
+      bar.className = 'bar';
+      const fill = document.createElement('i');
+      fill.style.width = (100 * count / report.concurrentRequests) + '%';
+      bar.append(fill);
+      const value = document.createElement('span');
+      value.textContent = count;
+      row.append(name, bar, value);
+      return row;
+    });
+    element('instances').replaceChildren(...rows);
+
+    const failed = new Map(report.consistency.violations.map(v => [v.rule, v.detail]));
+    element('checks').replaceChildren(...report.consistency.rulesEvaluated.map(rule => {
+      const item = document.createElement('li');
+      item.className = failed.has(rule) ? 'fail' : 'ok';
+      item.textContent = (failed.has(rule) ? '✗ ' : '✓ ') + (invariants[rule] || rule)
+        + (failed.has(rule) ? ': ' + failed.get(rule) : '');
+      return item;
+    }));
+
+    const history = document.createElement('tr');
+    [report.initialStock, report.concurrentRequests, report.successfulReservations, report.rejectedReservations,
+     report.unexpectedFailures, report.oversoldUnits, report.durationMillis,
+     report.dataConsistent ? 'Consistent' : 'VIOLATED'].forEach(value => {
+      const cell = document.createElement('td');
+      cell.textContent = value;
+      history.append(cell);
+    });
+    element('history').prepend(history);
+
+    element('result-section').hidden = false;
+    element('history-section').hidden = false;
+  }
+</script>
+</body>
+</html>

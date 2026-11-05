@@ -1,7 +1,9 @@
 package com.stockguard.common.error;
 
+import java.sql.SQLException;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import org.hibernate.exception.ConstraintViolationException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -14,6 +16,7 @@ import org.springframework.http.HttpStatusCode;
 import org.springframework.http.ProblemDetail;
 import org.springframework.http.ResponseEntity;
 import org.springframework.orm.ObjectOptimisticLockingFailureException;
+import org.springframework.orm.jpa.JpaSystemException;
 import org.springframework.transaction.CannotCreateTransactionException;
 import org.springframework.validation.method.ParameterErrors;
 import org.springframework.web.bind.MethodArgumentNotValidException;
@@ -31,6 +34,12 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
 
     /** Unique constraints that represent a normal client conflict rather than a bug. */
     private static final Map<String, ErrorCode> KNOWN_CONSTRAINTS = Map.of("uq_products_sku", ErrorCode.SKU_TAKEN);
+
+    /** SQLSTATE values of a server that is shutting down or restarting. Class 08 covers other connection failures. */
+    private static final Set<String> SERVER_GOING_AWAY = Set.of("57P01", "57P02", "57P03");
+
+    /** How HikariCP reports a connection it has already evicted: this exact message, with no SQLSTATE. */
+    private static final String POOL_CONNECTION_CLOSED = "Connection is closed";
 
     @ExceptionHandler(ApiException.class)
     ResponseEntity<ProblemDetail> handleApi(ApiException ex) {
@@ -57,6 +66,32 @@ public class GlobalExceptionHandler extends ResponseEntityExceptionHandler {
         return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
                 .header(HttpHeaders.RETRY_AFTER, "1")
                 .body(problem);
+    }
+
+    /**
+     * A connection can die in the middle of a transaction. The failed statement itself maps to a transient failure,
+     * but Spring then tries to roll back on the dead connection, and that second exception replaces the first. The
+     * database discards the unfinished transaction anyway, so this is still an outage the client may retry. Every
+     * other JPA failure stays an internal error, because retrying would not help and it may be a bug.
+     */
+    @ExceptionHandler(JpaSystemException.class)
+    ResponseEntity<ProblemDetail> handleJpaSystem(JpaSystemException ex) {
+        return isLostConnection(ex) ? handleTransient(ex) : handleUnexpected(ex);
+    }
+
+    private static boolean isLostConnection(Throwable failure) {
+        for (Throwable cause = failure; cause != null; cause = cause.getCause()) {
+            if (cause instanceof SQLException sql) {
+                String state = sql.getSQLState();
+                boolean lost = state == null
+                        ? POOL_CONNECTION_CLOSED.equals(sql.getMessage())
+                        : state.startsWith("08") || SERVER_GOING_AWAY.contains(state);
+                if (lost) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     @ExceptionHandler(DataIntegrityViolationException.class)

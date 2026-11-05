@@ -156,7 +156,7 @@ Also covered: real deadlocks and lock timeouts (`DeadlockAndContentionIT`), opti
 comparison of locking strategies with controls showing that the harness catches overselling (`StrategyComparisonIT`).
 
 To check that the tests can actually fail, each safeguard was removed from the code in turn and the tests were run.
-All 12 removals were caught; the table is in [docs/concurrency.md](docs/concurrency.md#do-the-tests-actually-catch-these-bugs).
+All 16 removals were caught; the table is in [docs/concurrency.md](docs/concurrency.md#do-the-tests-actually-catch-these-bugs).
 
 ## Project layout
 

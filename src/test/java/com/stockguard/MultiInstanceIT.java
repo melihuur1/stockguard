@@ -154,13 +154,16 @@ class MultiInstanceIT {
         UUID product = database.newProduct(first.api(), adminToken, reservations);
         List<User> users = database.newUsers(reservations);
 
+        // A deadline far in the future keeps the schedulers away until every hold is verified, however slow the machine.
         List<Api.Response> created = Concurrent.run(reservations, i -> instance(i).api().post(
                 "/api/v1/reservations", users.get(i).token(),
-                Map.of("productId", product, "quantity", 1, "ttlSeconds", 1), Map.of("Idempotency-Key", "ttl-" + i))).results();
+                Map.of("productId", product, "quantity", 1, "ttlSeconds", 3600), Map.of("Idempotency-Key", "ttl-" + i))).results();
         assertThat(created).allSatisfy(r -> assertThat(r.status()).isEqualTo(201));
-        assertThat(database.stock(product).reserved()).isEqualTo(reservations);
+        assertThat(database.stock(product)).isEqualTo(new Stock(reservations, 0, reservations));
 
-        // No test code triggers the sweep: only the scheduled jobs inside the two instances can release these.
+        // All deadlines pass at once. Test code only moves the deadline and never triggers the sweep, so only the
+        // scheduled jobs inside the two instances can release these.
+        database.execute("UPDATE reservations SET expires_at = now() - interval '1 second' WHERE product_id = ?", product);
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30);
         while (System.nanoTime() < deadline && database.stock(product).reserved() > 0) {
             Thread.sleep(100);
@@ -173,6 +176,26 @@ class MultiInstanceIT {
 
         ConcurrencyReport.add("Scenario 8: " + reservations + " expiries, schedulers on 2 JVMs",
                 "released exactly once each by instance: " + expiriesPerInstance(product) + ", stock=" + database.stock(product));
+    }
+
+    @Test
+    @DisplayName("A reservation with a short TTL expires on its own, with nothing touching its deadline")
+    void shortTtlExpiresInRealTime() throws Exception {
+        UUID product = database.newProduct(first.api(), adminToken, 1);
+        User user = database.newUsers(1).getFirst();
+
+        Api.Response created = second.api().post("/api/v1/reservations", user.token(),
+                Map.of("productId", product, "quantity", 1, "ttlSeconds", 1), Map.of("Idempotency-Key", "real-ttl"));
+        assertThat(created.status()).isEqualTo(201);
+
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(30);
+        while (System.nanoTime() < deadline && database.stock(product).reserved() > 0) {
+            Thread.sleep(100);
+        }
+
+        assertThat(database.stock(product)).isEqualTo(new Stock(1, 1, 0));
+        assertThat(database.count("SELECT COUNT(*) FROM reservations WHERE product_id = ? AND status = 'EXPIRED'", product)).isEqualTo(1);
+        assertConsistent(product);
     }
 
     private Map<String, Long> expiriesPerInstance(UUID product) throws Exception {

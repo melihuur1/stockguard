@@ -181,11 +181,12 @@ It runs at REPEATABLE READ, so all rules see one snapshot and a report stays cor
 
 ## Results
 
-Measured on 2026-11-05 with three consecutive clean `./mvnw clean verify` runs: **148 tests (20 unit, 128 integration),
-0 failures in all three runs**, about 3 minutes each. Ranges below cover those three runs.
+The suite has **166 tests (37 unit, 129 integration)** and passes on Windows and on Linux, including in containers
+limited to 4 and to 2 CPUs. The ranges below were measured on 2026-11-05 across three consecutive clean
+`./mvnw clean verify` runs on Windows, with 0 failures in all three.
 
-Environment: Windows 11, 16 logical CPUs, Java 21.0.2, PostgreSQL 17 in Docker Desktop with `fsync` on, 20 connections
-per instance. These are correctness results from a developer machine, not a performance benchmark. The correctness
+Environment for those ranges: Windows 11, 16 logical CPUs, Java 21.0.2, PostgreSQL 17 in Docker Desktop with `fsync` on,
+20 connections per instance. These are correctness results from a developer machine, not a performance benchmark. The correctness
 figures should hold anywhere; the timings will not. Every build produces its own measurements in
 `target/concurrency-report/report.md`, and CI publishes them.
 
@@ -281,6 +282,20 @@ The last row gives a rough idea of hot-row throughput: 1000 reservations of one 
 up (6.2 s on a cold start), about 270 to 300 commits per second, each writing a reservation, a ledger line and an audit
 event. This is a single measurement on a laptop, useful for scale only.
 
+### What running on Linux found
+
+Every Windows run had passed, but the first CI run failed. Reproducing the failure in a Linux container limited to 4
+CPUs found two problems:
+
+- **A real bug.** When PostgreSQL died during a transaction, the statement failed with a connection error, which
+  correctly maps to `503`. Spring then tried to roll back on the dead connection, and that second exception replaced
+  the first, so the client got `500`. Lost connections are now recognised by SQLSTATE and by the exact error HikariCP
+  raises for an evicted connection, while every other JPA failure still answers `500`.
+- **A timing assumption in a test.** A multi-instance test created 150 reservations with a 1 second TTL and then
+  checked that all of them were held. On a slower machine, creating them took longer than that, so the schedulers had
+  already released the first ones, correctly. The test now verifies every hold under a long TTL and then moves the
+  deadlines into the past. A separate test covers a real short TTL expiring with nothing touching its deadline.
+
 ## Do the tests actually catch these bugs?
 
 A green test proves nothing if it cannot go red. So each safeguard was removed from the code, one at a time, and the
@@ -300,6 +315,10 @@ relevant tests were run. Unmodified code was confirmed green first, in the same 
 | Ownership check on settlement | Caught | `otherUsersReservationsAreInvisible` |
 | Admin rule on stock receipts | Caught | `usersCannotCallAdminEndpoints` |
 | `@Version` on products | Caught | 6, including `concurrentEditsAreDetected`. Broad because the `NOT NULL` column then breaks product creation too |
+| The scheduled sweep | Caught | `schedulersOnBothInstancesExpireWithoutDoubleRelease`, `shortTtlExpiresInRealTime` |
+| Honouring the requested TTL | Caught | `shortTtlExpiresInRealTime` |
+| Mapping lost connections to `503` | Caught | `databaseCrashRecovery`, and 2 unit tests in `GlobalExceptionHandlerTest` |
+| Limiting that mapping to lost connections | Caught | 4 rollback tests including `failedReservationChangesNothing`, and 4 unit tests in `GlobalExceptionHandlerTest` |
 
 The first two rows also show the layers working. With the `WHERE` guard gone, stock still did not go negative:
 `ck_stock_available_non_negative` rejected the writes, so clients got `500` instead of `409`, which is why the tests

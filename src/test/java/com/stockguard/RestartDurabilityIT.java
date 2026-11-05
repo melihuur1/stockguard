@@ -257,10 +257,15 @@ class RestartDurabilityIT {
 
                 postgres.getDockerClient().killContainerCmd(postgres.getContainerId()).exec();
 
-                // While the database is down the API reports an honest, retryable failure.
-                Api.Response duringOutage = api.post("/api/v1/reservations", user.token(),
-                        Map.of("productId", product, "quantity", 1), Map.of("Idempotency-Key", "during-db-crash"));
-                assertThat(duringOutage.status()).as(duringOutage.toString()).isEqualTo(503);
+                // While the database is down every request gets an honest, retryable failure, whether its connection
+                // dies in the middle of the transaction or the pool can no longer provide one.
+                List<Api.Response> duringOutage = Concurrent.run(10, i -> api.post("/api/v1/reservations", user.token(),
+                        Map.of("productId", product, "quantity", 1), Map.of("Idempotency-Key", "during-db-crash-" + i))).results();
+                assertThat(duringOutage).allSatisfy(response -> {
+                    assertThat(response.status()).as(response.toString()).isEqualTo(503);
+                    assertThat(response.code()).isEqualTo("TEMPORARILY_UNAVAILABLE");
+                    assertThat(response.header("Retry-After")).isEqualTo("1");
+                });
 
                 postgres.getDockerClient().startContainerCmd(postgres.getContainerId()).exec();
                 awaitDatabase(database);
@@ -269,7 +274,7 @@ class RestartDurabilityIT {
 
                 // The same application process recovers without a restart, and the failed request can be retried.
                 Api.Response retried = awaitNotUnavailable(() -> api.post("/api/v1/reservations", user.token(),
-                        Map.of("productId", product, "quantity", 1), Map.of("Idempotency-Key", "during-db-crash")));
+                        Map.of("productId", product, "quantity", 1), Map.of("Idempotency-Key", "during-db-crash-0")));
                 assertThat(retried.status()).as(retried.toString()).isEqualTo(201);
                 assertThat(database.stock(product)).isEqualTo(new Stock(10, 5, 5));
                 assertConsistent(api, admin, product);

@@ -9,6 +9,7 @@ import com.stockguard.support.ConcurrencyReport;
 import com.stockguard.support.IntegrationTest;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ThreadLocalRandom;
 import org.junit.jupiter.api.DisplayName;
@@ -87,7 +88,7 @@ class ReservationConcurrencyIT extends IntegrationTest {
                 case 0 -> reserve(user, product, 1 + ThreadLocalRandom.current().nextInt(3), "mixed-" + i);
                 case 1 -> confirm(users.get(i / 5 % 30), held.get(i / 5 % 30));
                 case 2 -> cancel(users.get(i / 5 % 30), held.get(i / 5 % 30));
-                case 3 -> api.post("/api/v1/products/" + product + "/stock", admin().token(), java.util.Map.of("quantity", 1));
+                case 3 -> api.post("/api/v1/products/" + product + "/stock", admin().token(), Map.of("quantity", 1));
                 default -> reserve(user, product, 1, "mixed-" + i);
             };
         });

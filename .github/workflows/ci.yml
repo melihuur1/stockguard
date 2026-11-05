@@ -53,8 +53,8 @@ jobs:
 
       - name: Create throwaway secrets
         run: |
+          cp .env.example .env
           {
-            cp .env.example .env
             echo "POSTGRES_PASSWORD=$(openssl rand -hex 24)"
             echo "STOCKGUARD_JWT_SECRET=$(openssl rand -hex 32)"
             echo "STOCKGUARD_ADMIN_PASSWORD=$(openssl rand -hex 16)"

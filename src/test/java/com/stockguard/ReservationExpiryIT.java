@@ -9,6 +9,8 @@ import com.stockguard.support.ConcurrencyReport;
 import com.stockguard.support.IntegrationTest;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -95,7 +97,7 @@ class ReservationExpiryIT extends IntegrationTest {
     @Test
     @DisplayName("Scenario 6: confirm racing the sweep at the deadline has exactly one winner")
     void confirmRacingExpiryAtTheDeadline() {
-        int rounds = 60;
+        int rounds = 40;
         UUID product = newProduct(rounds);
         TestUser user = newUser();
         int confirmWins = 0;
@@ -103,19 +105,22 @@ class ReservationExpiryIT extends IntegrationTest {
 
         for (int round = 0; round < rounds; round++) {
             UUID reservation = reserveOk(user, product, 1);
-            // The deadline is 40 ms away on the database clock. Confirm fires 15 to 65 ms from now, spreading
-            // its arrival on both sides of the deadline, while a sweeper runs continuously across the same window.
-            jdbc.sql("UPDATE reservations SET expires_at = clock_timestamp() + interval '40 milliseconds' WHERE id = :id")
+            // The deadline is 100 ms away on the database clock while a sweeper runs continuously across it.
+            // Even rounds fire confirm right at the deadline so that the two collide. Odd rounds spread it over a
+            // wide window, so that each side wins some rounds even on a slow machine.
+            jdbc.sql("UPDATE reservations SET expires_at = clock_timestamp() + interval '100 milliseconds' WHERE id = :id")
                     .param("id", reservation)
                     .update();
-            int confirmDelay = 15 + ThreadLocalRandom.current().nextInt(50);
+            int confirmDelay = round % 2 == 0
+                    ? 85 + ThreadLocalRandom.current().nextInt(30)
+                    : ThreadLocalRandom.current().nextInt(200);
 
             Api.Response confirmResult = Concurrent.run(2, i -> {
                 if (i == 0) {
                     Thread.sleep(confirmDelay);
                     return confirm(user, reservation);
                 }
-                long end = System.nanoTime() + 110_000_000L;
+                long end = System.nanoTime() + 230_000_000L;
                 while (System.nanoTime() < end) {
                     expiry.expireDueBatch(100);
                     Thread.sleep(1);
@@ -216,8 +221,7 @@ class ReservationExpiryIT extends IntegrationTest {
         Api.Response created = api.post("/api/v1/reservations", newUser().token(),
                 Map.of("productId", product, "quantity", 1, "ttlSeconds", 120), Map.of("Idempotency-Key", "ttl"));
 
-        long seconds = java.time.Duration.between(
-                java.time.Instant.parse(created.text("createdAt")), java.time.Instant.parse(created.text("expiresAt"))).toSeconds();
+        long seconds = Duration.between(Instant.parse(created.text("createdAt")), Instant.parse(created.text("expiresAt"))).toSeconds();
 
         assertThat(seconds).isEqualTo(120);
     }

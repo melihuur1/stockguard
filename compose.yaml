@@ -1,0 +1,65 @@
+# Two application instances sharing one PostgreSQL, which is the setup StockGuard's guarantees are built for.
+# All ports are bound to localhost only. Copy .env.example to .env and fill it in before starting.
+name: stockguard
+
+x-app: &app
+  build: .
+  image: stockguard:local
+  restart: unless-stopped
+  depends_on:
+    postgres:
+      condition: service_healthy
+  healthcheck:
+    test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:8080/actuator/health/readiness"]
+    interval: 5s
+    timeout: 3s
+    retries: 30
+    start_period: 20s
+
+x-app-environment: &app-environment
+  STOCKGUARD_PORT: "8080"
+  STOCKGUARD_DB_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-stockguard}
+  STOCKGUARD_DB_USERNAME: ${POSTGRES_USER:-stockguard}
+  STOCKGUARD_DB_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env (see .env.example)}
+  STOCKGUARD_JWT_SECRET: ${STOCKGUARD_JWT_SECRET:?Set STOCKGUARD_JWT_SECRET in .env (see .env.example)}
+  STOCKGUARD_ADMIN_USERNAME: ${STOCKGUARD_ADMIN_USERNAME:-admin}
+  STOCKGUARD_ADMIN_PASSWORD: ${STOCKGUARD_ADMIN_PASSWORD:?Set STOCKGUARD_ADMIN_PASSWORD in .env (see .env.example)}
+  STOCKGUARD_SIMULATION_ENABLED: ${STOCKGUARD_SIMULATION_ENABLED:-true}
+  STOCKGUARD_SIMULATION_TARGETS: http://app-1:8080,http://app-2:8080
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-stockguard}
+      POSTGRES_USER: ${POSTGRES_USER:-stockguard}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env (see .env.example)}
+    ports:
+      - "127.0.0.1:${STOCKGUARD_DB_HOST_PORT:-5442}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  app-1:
+    <<: *app
+    environment:
+      <<: *app-environment
+      STOCKGUARD_INSTANCE_ID: app-1
+    ports:
+      - "127.0.0.1:${STOCKGUARD_APP1_HOST_PORT:-8095}:8080"
+
+  app-2:
+    <<: *app
+    environment:
+      <<: *app-environment
+      STOCKGUARD_INSTANCE_ID: app-2
+    ports:
+      - "127.0.0.1:${STOCKGUARD_APP2_HOST_PORT:-8096}:8080"
+
+volumes:
+  pgdata:
